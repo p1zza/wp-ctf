@@ -1,0 +1,64 @@
+version: '3.8'
+
+services:
+  db:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpass123
+      MYSQL_DATABASE: wordpress
+      MYSQL_USER: wpuser
+      MYSQL_PASSWORD: wppass123
+    volumes:
+      - db_data:/var/lib/mysql
+
+  wordpress:
+    image: wordpress:latest
+    ports:
+      - "8080:80"
+    environment:
+      WORDPRESS_DB_HOST: db:3306
+      WORDPRESS_DB_NAME: wordpress
+      WORDPRESS_DB_USER: wpuser
+      WORDPRESS_DB_PASSWORD: wppass123
+    volumes:
+      - wordpress_data:/var/www/html
+    depends_on:
+      - db
+
+  wp-init:
+    image: wordpress:cli
+    environment:
+      WORDPRESS_DB_HOST: db:3306
+      WORDPRESS_DB_NAME: wordpress
+      WORDPRESS_DB_USER: wpuser
+      WORDPRESS_DB_PASSWORD: wppass123
+      WP_ADMIN_USER: admin
+      WP_ADMIN_PASSWORD: supersecret123
+      WP_ADMIN_EMAIL: admin@example.com
+    volumes:
+      - wordpress_data:/var/www/html
+      - ./xss-disable.php:/tmp/xss-disable.php  # Монтируем извне
+    user: root
+    command: >
+      bash -c "
+        sleep 30 &&
+        wp core install --url=localhost:8080 --title=CTF --admin_user=$$WP_ADMIN_USER --admin_password=$$WP_ADMIN_PASSWORD --admin_email=$$WP_ADMIN_EMAIL --allow-root &&
+        wp option update users_can_register 1 --allow-root &&
+        wp option update comment_moderation 0 --allow-root &&
+        wp option update comment_whitelist 0 --allow-root &&
+        wp option update comment_previously_approved 0 --allow-root &&
+        
+        # Копируем готовый файл
+        mkdir -p /var/www/html/wp-content/mu-plugins &&
+        cp /tmp/xss-disable.php /var/www/html/wp-content/mu-plugins/xss-disable.php &&
+        chown -R www-data:www-data /var/www/html/wp-content/mu-plugins &&
+        
+        echo 'Done'
+      "
+    depends_on:
+      - db
+      - wordpress
+
+volumes:
+  db_data:
+  wordpress_data:
