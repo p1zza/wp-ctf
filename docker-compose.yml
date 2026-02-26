@@ -37,7 +37,8 @@ services:
       WP_ADMIN_EMAIL: admin@example.com
     volumes:
       - wordpress_data:/var/www/html
-      - ./xss-disable.php:/tmp/xss-disable.php  # Монтируем извне
+      - ./xss-disable.php:/tmp/xss-disable.php
+      - ./patch-pluggable.sh:/tmp/patch-pluggable.sh
     user: root
     command: >
       bash -c "
@@ -52,6 +53,9 @@ services:
         mkdir -p /var/www/html/wp-content/mu-plugins &&
         cp /tmp/xss-disable.php /var/www/html/wp-content/mu-plugins/xss-disable.php &&
         chown -R www-data:www-data /var/www/html/wp-content/mu-plugins &&
+        
+        # Патчим pluggable.php
+        bash /tmp/patch-pluggable.sh &&
         
         echo 'Done'
       "
