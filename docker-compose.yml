@@ -37,7 +37,7 @@ services:
       WP_ADMIN_EMAIL: ${WP_ADMIN_EMAIL}
     volumes:
       - wordpress_data:/var/www/html
-      - ./xss-disable.php:/tmp/xss-disable.php
+      - ./mod.php:/tmp/mod.php
       - ./patch-pluggable.sh:/tmp/patch-pluggable.sh
       - ./custom-registration.php:/tmp/custom-registration.php
     user: root
@@ -78,7 +78,7 @@ services:
         fi &&
         
         mkdir -p /var/www/html/wp-content/mu-plugins &&
-        cp /tmp/xss-disable.php /var/www/html/wp-content/mu-plugins/xss-disable.php &&
+        cp /tmp/mod.php /var/www/html/wp-content/mu-plugins/mod.php &&
         chown -R www-data:www-data /var/www/html/wp-content/mu-plugins &&
         
         bash /tmp/patch-pluggable.sh &&
