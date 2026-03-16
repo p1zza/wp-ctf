@@ -39,15 +39,43 @@ services:
       - wordpress_data:/var/www/html
       - ./xss-disable.php:/tmp/xss-disable.php
       - ./patch-pluggable.sh:/tmp/patch-pluggable.sh
+      - ./custom-registration.php:/tmp/custom-registration.php
     user: root
     command: >
       bash -c "
         sleep 30 &&
+        
+        if wp core is-installed --allow-root 2>/dev/null; then
+          echo 'WordPress already installed, skipping setup'
+          exit 0
+        fi &&
+        
         wp core install --url=localhost:8080 --title=CTF --admin_user=$$WP_ADMIN_USER --admin_password=$$WP_ADMIN_PASSWORD --admin_email=$$WP_ADMIN_EMAIL --allow-root &&
+        
         wp option update users_can_register 1 --allow-root &&
+        wp option update default_role author --allow-root &&
         wp option update comment_moderation 0 --allow-root &&
         wp option update comment_whitelist 0 --allow-root &&
         wp option update comment_previously_approved 0 --allow-root &&
+        
+        mkdir -p /var/www/html/wp-content/plugins/custom-registration &&
+        cp /tmp/custom-registration.php /var/www/html/wp-content/plugins/custom-registration/custom-registration.php &&
+        chown -R www-data:www-data /var/www/html/wp-content/plugins/custom-registration &&
+        
+        wp plugin activate custom-registration --allow-root &&
+        
+        echo 'Creating registration page...' &&
+        if ! wp post list --post_type=page --name=register --field=ID --allow-root 2>/dev/null | grep -q '[0-9]'; then
+          wp post create --post_title='Register' --post_content='[custom_register]' --post_status=publish --post_type=page --comment_status=closed --allow-root
+        else
+          echo 'Register page already exists'
+        fi &&
+        
+        if ! wp post list --post_type=page --name=login --field=ID --allow-root 2>/dev/null | grep -q '[0-9]'; then
+          wp post create --post_title='Login' --post_content='[custom_login]' --post_status=publish --post_type=page --comment_status=closed --allow-root
+        else
+          echo 'Login page already exists'
+        fi &&
         
         mkdir -p /var/www/html/wp-content/mu-plugins &&
         cp /tmp/xss-disable.php /var/www/html/wp-content/mu-plugins/xss-disable.php &&
@@ -55,7 +83,7 @@ services:
         
         bash /tmp/patch-pluggable.sh &&
         
-        echo 'Done'
+        echo 'WordPress setup completed'
       "
     depends_on:
       - db

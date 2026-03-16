@@ -3,3 +3,6 @@
 /.venv
 /secure-http-headers
 /secure-http-headers.zip
+admin-bot.py
+comments.json
+/admin-bot

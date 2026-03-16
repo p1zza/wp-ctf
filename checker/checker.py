@@ -26,8 +26,8 @@ class Checker(BaseChecker):
         self.cquit(Status.OK, new_id)
 
     def get(self, flag_id, flag, vuln):
-        got_flag = self.mch.get_flag(flag_id, vuln)
-        self.assert_eq(got_flag, flag ,'Could not get flag', status=Status.CORRUPT)
+        got_flag = self.mch.get_flag(flag_id, flag)  # ← передаём flag!
+        self.assert_eq(got_flag, flag, 'Could not get flag', status=Status.CORRUPT)
         self.cquit(Status.OK)
         
 if __name__ == '__main__':

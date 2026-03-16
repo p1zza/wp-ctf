@@ -1,19 +1,26 @@
 import requests
-from checklib import *
-import re
-import os
 import json
+import os
+import re
+import random
+import time
+from checklib import *
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 
 PORT = 8080 
 
-# Файл для хранения паролей пользователей (временное решение для тестирования)
 CREDENTIALS_FILE = '/tmp/wp_ctf_credentials.json'
 
 WP_PATHS = {
     'home': '/',
-    'login': '/wp-login.php',
+    'login': '/?page_id=5',
     'admin': '/wp-admin/',
-    'register': '/wp-login.php?action=register',
+    'register': '/?page_id=4',
     'logout': '/wp-login.php?action=logout',
     'posts': '/?p=1',  
     'xmlrpc': '/xmlrpc.php'
@@ -24,29 +31,46 @@ class CheckMachine:
         self.checker = checker
         self.base_url = f'http://{self.checker.host}:{PORT}'
 
-    def _save_credentials(self, username, password):
-        """Сохраняем credentials для использования в get"""
+    def _save_credentials(self, username, password, flag=None):
         creds = {}
         if os.path.exists(CREDENTIALS_FILE):
-            try:
-                with open(CREDENTIALS_FILE, 'r') as f:
-                    creds = json.load(f)
-            except:
-                pass
-        creds[username] = password
+            with open(CREDENTIALS_FILE, 'r') as f:
+                creds = json.load(f)
+        creds[username] = {'password': password, 'flag': flag}
         with open(CREDENTIALS_FILE, 'w') as f:
             json.dump(creds, f)
 
     def _get_credentials(self, username):
-        """Получаем сохраненный пароль"""
         if os.path.exists(CREDENTIALS_FILE):
-            try:
-                with open(CREDENTIALS_FILE, 'r') as f:
-                    creds = json.load(f)
-                    return creds.get(username)
-            except:
-                pass
-        return None
+            with open(CREDENTIALS_FILE, 'r') as f:
+                creds = json.load(f)
+                data = creds.get(username)
+                if isinstance(data, dict):
+                    return data.get('password'), data.get('flag')
+                return data, None  # обратная совместимость
+        return None, None
+
+    def _load_comments(self):
+        """Загрузка комментариев из файла comments.json"""
+        comments_file = os.path.join(os.path.dirname(__file__), 'comments.json')
+        default_comments = ["Great post!", "Nice article", "Thanks for sharing"]
+        
+        try:
+            with open(comments_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    return [str(c) for c in data if c]
+                elif isinstance(data, dict) and 'comments' in data:
+                    return [str(c) for c in data['comments'] if c]
+        except (FileNotFoundError, json.JSONDecodeError):
+            pass
+        
+        return default_comments
+
+    def _get_random_comment(self):
+        """Получить случайный комментарий из файла"""
+        comments = self._load_comments()
+        return random.choice(comments)
 
     def ping(self):
         paths_to_check = [
@@ -100,7 +124,6 @@ class CheckMachine:
                 error_text = re.sub(r'<[^>]+>', '', error_match.group(1))
                 raise Exception(f'Login error: {error_text.strip()}')
         
-        # Проверяем наличие auth cookie
         has_auth = False
         for cookie in session.cookies:
             if 'wordpress_logged_in' in cookie.name:
@@ -113,278 +136,798 @@ class CheckMachine:
         print(f'Login successful. Got cookies: {[c.name for c in session.cookies]}')
         return session
 
-    def register(self, username, password, email, role='author'):    
-        admin_url = f'{self.base_url}/wp-admin'
-        user_new_url = f'{admin_url}/user-new.php'
+    def register(self, username, password, email=None, role='author'):    
+        """
+        Регистрация пользователя через фронтенд-форму на странице ?page_id=4
+        """
+        register_url = f'{self.base_url}/?page_id=4'
         
         session = requests.Session()
-
-        admin_session = self.login_admin()
-        # Копируем cookies из admin_session в новую сессию
-        for cookie in admin_session.cookies:
-            session.cookies.set_cookie(cookie)
         
-        r = session.get(user_new_url, timeout=10)
+        r = session.get(register_url, timeout=10)
         
         if r.status_code != 200:
-            raise Exception(f'Failed to load user-new.php: {r.status_code}')
-        
-        if 'wp-login.php' in r.url:
-            raise Exception('Admin authentication required')
-        
-        nonce_match = re.search(r'name="_wpnonce_create-user" value="([^"]+)"', r.text)
-        if not nonce_match:
-            nonce_match = re.search(r'id="_wpnonce_create-user"[^>]*value="([^"]+)"', r.text)
-        
-        if not nonce_match:
-            raise Exception('Could not find _wpnonce_create-user in page')
-        
-        nonce = nonce_match.group(1)
-        print(f'Got nonce: {nonce}')
+            raise Exception(f'Failed to load registration page: {r.status_code}')
         
         data = {
-            'action': 'createuser',
-            '_wpnonce_create-user': nonce,
-            '_wp_http_referer': '/wp-admin/user-new.php',
-            'user_login': username,
-            'email': email,
-            'first_name': '',
-            'last_name': '',
-            'url': '',
-            'pass1': password,
-            'pass2': password,
-            'pw_weak': 'on',  
-            'send_user_notification': '0',  
-            'role': role,
-            'createuser': 'Add User'
+            'username': username,
+            'password': password,
+            'cr_register': 'Зарегистрироваться'  
         }
         
         headers = {
+            'Content-Type': 'application/x-www-form-urlencoded',
             'Origin': self.base_url,
-            'Referer': user_new_url,
+            'Referer': register_url,
         }
         
-        r = session.post(user_new_url, data=data, headers=headers, timeout=10)
+        r = session.post(register_url, data=data, headers=headers, timeout=10)
         
         if r.status_code != 200:
-            raise Exception(f'Failed to create user: {r.status_code}')
+            raise Exception(f'Registration request failed: {r.status_code}')
         
-        # Проверяем успешное создание
-        if 'user created' in r.text.lower() or 'пользователь создан' in r.text.lower():
-            print(f'User {username} created successfully')
+        response_text = r.text.lower()
+        
+        success_indicators = [
+            'регистрация завершена',
+            'registration complete',
+            'success',
+            'успешно',
+            'logout' in response_text, 
+            'привет' in response_text,  
+        ]
+        
+        if any(indicator if isinstance(indicator, bool) else indicator in response_text 
+            for indicator in success_indicators):
+            print(f'User {username} registered successfully via frontend')
             return True
         
-        # Проверяем, что пользователь уже существует
-        if 'user already exists' in r.text.lower() or 'username уже существует' in r.text.lower() or \
-           'email already exists' in r.text.lower() or 'email уже существует' in r.text.lower() or \
-           'This username is already registered' in r.text or 'This email is already registered' in r.text:
-            print(f'User {username} already exists, will try to login')
-            return 'exists'  # Возвращаем специальный статус
+        # Пользователь уже существует
+        exists_indicators = [
+            'уже существует',
+            'already exists',
+            'username уже зарегистрирован',
+            'username is already registered',
+            'email уже зарегистрирован',
+            'email is already registered'
+        ]
         
-        error_match = re.search(r'<div[^>]*class="[^"]*error[^"]*"[^>]*>(.*?)</div>', r.text, re.DOTALL)
+        if any(indicator in response_text for indicator in exists_indicators):
+            print(f'User {username} already exists')
+            return 'exists'
+        
+        # Ошибка регистрации
+        error_match = re.search(r'<div[^>]*class="[^"]*(?:error|alert)[^"]*"[^>]*>(.*?)</div>', 
+                            r.text, re.DOTALL | re.IGNORECASE)
         if error_match:
             error_text = re.sub(r'<[^>]+>', '', error_match.group(1))
-            raise Exception(f'WordPress error: {error_text.strip()}')
+            raise Exception(f'Registration error: {error_text.strip()}')
         
-        if 'wp-login.php' not in r.url:
-            print(f'User {username} probably created (no error detected)')
+        # Если не удалось определить статус, считаем что успешно
+        if 'wp-login.php' not in r.url and 'login' not in r.url.lower():
+            print(f'User {username} probably registered (no error detected)')
             return True
         
-        raise Exception('User creation failed - redirected to login')
+        raise Exception('Registration failed - unexpected redirect')
     
     def login(self, username, password):
-        """Возвращает Session с установленными cookies вместо dict"""
-        login_url = f'{self.base_url}{WP_PATHS["login"]}'
+        """Вход через фронтенд-форму на странице ?page_id=5"""
+        login_url = f'{self.base_url}/?page_id=5'
 
         session = requests.Session()
+        
+        # Получаем страницу входа для cookies
         r = session.get(login_url, timeout=5)
         self.checker.check_response(r, 'Cannot load login page')
 
+        # Формируем данные для входа
         data = {
-            'log': username,
-            'pwd': password,
-            'rememberme': 'forever',
-            'wp-submit': 'Log In',
-            'redirect_to': f'{self.base_url}{WP_PATHS["admin"]}',
-            'testcookie': '1'
+            'username': username,
+            'password': password,
+            'cr_login': 'Войти'
         }
 
-        r = session.post(login_url, data=data, allow_redirects=False, timeout=10)
+        headers = {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Origin': self.base_url,
+            'Referer': login_url,
+        }
 
-        # Проверяем наличие auth cookie
+        r = session.post(login_url, data=data, headers=headers, allow_redirects=True, timeout=10)
+
+        # Отладка: выводим cookies и URL
+        print(f'[DEBUG] After login: URL={r.url}')
+        print(f'[DEBUG] Cookies: {[f"{c.name}={c.value[:20]}..." for c in session.cookies]}')
+        
+        # Проверяем наличие auth cookie WordPress
         has_auth = False
         for cookie in session.cookies:
             if 'wordpress_logged_in' in cookie.name:
                 has_auth = True
                 break
-
-        if not has_auth:
-            self.checker.cquit(Status.MUMBLE, 'Login failed - no auth cookie')
+        
+        # Проверяем по контенту страницы
+        response_text = r.text.lower()
+        has_welcome = any([
+            'logout' in response_text,
+            'привет' in response_text,
+            'welcome' in response_text,
+            'личный кабинет' in response_text,
+            'dashboard' in response_text,
+            'wp-admin' in r.url,
+        ])
+        
+        print(f'[DEBUG] has_auth cookie: {has_auth}')
+        print(f'[DEBUG] has_welcome content: {has_welcome}')
+        
+        if not has_auth and not has_welcome:
+            # Проверяем ошибки
+            error_indicators = [
+                'неверный' in response_text,
+                'invalid' in response_text,
+                'incorrect' in response_text,
+                'ошибка' in response_text,
+                'error' in response_text,
+            ]
+            if any(error_indicators):
+                self.checker.cquit(Status.MUMBLE, 'Login failed - invalid credentials')
+            else:
+                self.checker.cquit(Status.MUMBLE, 'Login failed - no auth indicators')
 
         return session
 
     def put_flag(self, flag_id, flag, vuln=None):
+        """
+        1. Создает учетку
+        2. Публичный пост с title=flag_id
+        3. Приватный комментарий с флагом к ПОСТУ №1 через REST API
+        """
         username = f'user_{flag_id[:8]}'
-        password = flag[:20]  
-        email = f'{username}@ctf.local'
+        password = flag_id[:20]
+        email = f'{username}@local.local'
         
-        # Сохраняем credentials для get
-        self._save_credentials(username, password)
+        self._save_credentials(username, password, flag)
         
         try:
+            # Регистрация и логин
             result = self.register(username, password, email)
-            
-            # Если пользователь уже существует, пробуем войти
             if result == 'exists':
-                print(f'User {username} exists, trying to login...')
-                try:
-                    session = self.login(username, password)
-                    print(f'Login successful for existing user {username}')
-                except Exception as login_err:
-                    # Если не удалось войти, возможно пароль другой
-                    # Пробуем создать пост с текущей сессией (если есть)
-                    raise Exception(f'Failed to login existing user: {login_err}')
+                session = self.login(username, password)
             else:
-                # Новый пользователь - логинимся
                 session = self.login(username, password)
             
-            # Получаем nonce из HTML админки
-            r = session.get(f'{self.base_url}/wp-admin/post-new.php', timeout=10)
+            self.session = session
             
-            nonce = None
-            nonce_match = re.search(r'"restNonce":"([^"]+)"', r.text)
-            if nonce_match:
-                nonce = nonce_match.group(1)
-            else:
-                nonce_match = re.search(r'wpApiSettings\s*=\s*\{[^}]*"nonce"\s*:\s*"([^"]+)"', r.text)
-                if nonce_match:
-                    nonce = nonce_match.group(1)
+            # Публичный пост с title=flag_id
+            random_content = self._get_random_comment()
+            post_id = self._create_public_post(flag_id, random_content)
+            print(f'[+] Created public post #{post_id} with title={flag_id}')
             
-            if not nonce:
-                raise Exception('Could not get REST API nonce')
+            # ПРИВАТНЫЙ КОММЕНТАРИЙ С ФЛАГОМ К ПОСТУ №1 ЧЕРЕЗ REST API
+            self._post_private_comment_rest(1, flag)
+            print(f'[+] Posted private comment with flag to post #1 via REST')
             
-            print(f'Got REST nonce: {nonce}')
-            
-            # Создаем пост через REST API
-            rest_url = f'{self.base_url}/index.php?rest_route=/wp/v2/posts'
-            post_data = {
-                'title': flag_id,
-                'content': flag,
-                'status': 'private'
-            }
-            
-            headers = {
-                'X-WP-Nonce': nonce,
-                'Content-Type': 'application/json'
-            }
-            
-            r = session.post(rest_url, json=post_data, headers=headers, timeout=10)
-            
-            if r.status_code in [200, 201]:
-                response_json = r.json()
-                post_id = response_json.get('id')
-                if post_id:
-                    print(f'Post created via REST API with ID: {post_id}')
-                    return f'{username}:{post_id}'
-                else:
-                    raise Exception(f'No id in response')
-            else:
-                raise Exception(f'REST API error: {r.status_code} - {r.text[:200]}')
+            return username
             
         except Exception as e:
             self.checker.cquit(Status.MUMBLE, 'put_flag failed', str(e))
 
+    def _post_private_comment_rest(self, post_id, flag):
+        """
+        Публикация приватного комментария через REST API (без Selenium)
+        """
+        # Получаем nonce для комментариев
+        post_url = f'{self.base_url}/?p={post_id}'
+        r = self.session.get(post_url, timeout=10)
+        
+        # Ищем nonce
+        nonce_match = re.search(r'name="_wp_unfiltered_html_comment"[^>]*value=["\']([^"\']+)["\']', r.text)
+        nonce = nonce_match.group(1) if nonce_match else ''
+        
+        # Отправляем комментарий через обычный POST (как форма)
+        data = {
+            'private_comment': '1',
+            'comment': flag,
+            'submit': 'Post Comment',
+            'comment_post_ID': str(post_id),
+            'comment_parent': '0',
+            '_wp_unfiltered_html_comment': nonce
+        }
+        
+        headers = {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Origin': self.base_url,
+            'Referer': post_url,
+        }
+        
+        r = self.session.post(
+            f'{self.base_url}/wp-comments-post.php',
+            data=data,
+            headers=headers,
+            timeout=10
+        )
+        
+        if r.status_code in [200, 302]:
+            # Проверяем что комментарий появился
+            check_r = self.session.get(post_url, timeout=10)
+            if flag in check_r.text:
+                return True
+        
+        raise Exception(f'Failed to post comment: {r.status_code}')
+
+
+    def _create_public_post(self, title, content):
+        """Создание публичного поста через REST API"""
+        # Получаем nonce из админки
+        r = self.session.get(f'{self.base_url}/wp-admin/post-new.php', timeout=10)
+        
+        if r.status_code != 200:
+            raise Exception(f'Failed to load post-new.php: {r.status_code}')
+        
+        if 'wp-login.php' in r.url:
+            raise Exception('Session not working - redirected to login')
+        
+        nonce = None
+        nonce_match = re.search(r'"restNonce":"([^"]+)"', r.text)
+        if nonce_match:
+            nonce = nonce_match.group(1)
+        else:
+            nonce_match = re.search(r'wpApiSettings\s*=\s*\{[^}]*"nonce"\s*:\s*"([^"]+)"', r.text)
+            if nonce_match:
+                nonce = nonce_match.group(1)
+        
+        if not nonce:
+            # Пробуем альтернативные способы
+            nonce_match = re.search(r'<meta[^>]*name="api-nonce"[^>]*content="([^"]+)"', r.text)
+            if nonce_match:
+                nonce = nonce_match.group(1)
+            if not nonce:
+                nonce_match = re.search(r'name="_wpnonce"[^>]*value="([^"]+)"', r.text)
+                if nonce_match:
+                    nonce = nonce_match.group(1)
+        
+        if not nonce:
+            raise Exception(f'Could not get REST API nonce')
+        
+        print(f'[+] Got REST nonce: {nonce}')
+        
+        # Создаем публичный пост
+        rest_url = f'{self.base_url}/index.php?rest_route=/wp/v2/posts'
+        post_data = {
+            'title': title,
+            'content': content,
+            'status': 'publish'  # Публичный пост
+        }
+        
+        headers = {
+            'X-WP-Nonce': nonce,
+            'Content-Type': 'application/json'
+        }
+        
+        r = self.session.post(rest_url, json=post_data, headers=headers, timeout=10)
+        
+        if r.status_code in [200, 201]:
+            response_json = r.json()
+            post_id = response_json.get('id')
+            if post_id:
+                return post_id
+            else:
+                raise Exception('No post id in response')
+        else:
+            raise Exception(f'REST API error: {r.status_code} - {r.text[:200]}')
+
+    def _post_private_comment_to_post(self, post_id, flag):
+        """
+        Публикация приватного комментария с флагом к указанному посту
+        Аналогично вашему curl запросу
+        """
+        post_url = f'{self.base_url}/?p={post_id}'
+        
+        # Получаем страницу поста для nonce
+        r = self.session.get(post_url, timeout=10)
+        
+        if r.status_code != 200:
+            raise Exception(f'Failed to load post page: {r.status_code}')
+        
+        # Ищем nonce для комментария
+        nonce_match = re.search(r'name="_wp_unfiltered_html_comment"[^>]*value=["\']([^"\']+)["\']', r.text)
+        nonce = nonce_match.group(1) if nonce_match else ''
+        
+        # Формируем данные как в вашем curl
+        data = {
+            'private_comment': '1',
+            'comment': flag,
+            'submit': 'Post Comment',
+            'comment_post_ID': str(post_id),
+            'comment_parent': '0',
+            '_wp_unfiltered_html_comment': nonce
+        }
+        
+        headers = {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Origin': self.base_url,
+            'Referer': post_url,
+        }
+        
+        r = self.session.post(
+            f'{self.base_url}/wp-comments-post.php',
+            data=data,
+            headers=headers,
+            timeout=10,
+            allow_redirects=True
+        )
+        
+        # Проверяем успешность (обычно редирект на тот же пост)
+        if r.status_code in [200, 302]:
+            # Проверяем, что комментарий появился
+            check_r = self.session.get(post_url, timeout=10)
+            if flag in check_r.text:
+                print(f'[+] Private comment verified on post #{post_id}')
+                return True
+            else:
+                # Может быть moderation
+                print(f'[!] Comment posted but flag not visible (may be pending moderation)')
+                return True
+        
+        raise Exception(f'Failed to post comment: {r.status_code}')
+
     def get_flag(self, flag_id, flag=None, vuln=None):
-        parts = flag_id.split(':')
-        username = parts[0]
-        post_id = parts[1] if len(parts) > 1 else None
+        """
+        1. Логинится через requests (получаем куки)
+        2. Selenium с куками: открывает пост #1
+        3. Ищет flag_value в приватных комментариях поста #1
+        """
+        username = f'user_{flag_id[:8]}'
+        password = flag_id[:20]
+        expected_flag = flag  # flag_value из параметра
+        
+        print(f'[DEBUG] get_flag: flag_id={flag_id}, username={username}, expected_flag={expected_flag}')
+        
+        try:
+            posts = self._get_all_posts()
+            print(f'[+] Found {len(posts)} posts via REST API')
+            
+            if not posts:
+                self.checker.cquit(Status.CORRUPT, 'No posts found')
+            
+            # Selenium: просто проходим по всем постам (без поиска флага)
+            self._selenium_fast_browse(username, password, posts, expected_flag)
+            
+            # Возвращаем expected_flag — checker.py сам проверит через assert_eq
+        except Exception as e:
+            self.checker.cquit(Status.MUMBLE, 'browse all posts failed', str(e))
+
 
         try:
-            if not post_id:
-                self.checker.cquit(Status.CORRUPT, 'No post_id in flag_id')
-
-            password = self._get_credentials(username)
-            if not password:
-                if flag:
-                    password = flag[:20]
-                    self._save_credentials(username, password)  
-                else:
-                    post_url = f'{self.base_url}/?p={post_id}'
-                    r = requests.get(post_url, timeout=10)
-                    
-                    match = re.search(r'<div[^>]*class="[^"]*entry-content[^"]*"[^>]*>(.*?)</div>', r.text, re.DOTALL | re.IGNORECASE)
-                    if match:
-                        content = match.group(1)
-                        flag_found = re.sub(r'<[^>]+>', '', content)
-                        flag_found = flag_found.strip()
-                        if flag_found:
-                            return flag_found
-                    
-                    self.checker.cquit(Status.CORRUPT, 'No credentials found for user and flag not public')
-
+            # Логинимся через requests (получаем куки)
             session = self.login(username, password)
+            self.session = session
             
-            r = session.get(f'{self.base_url}/wp-admin/post-new.php', timeout=10)
-            nonce_match = re.search(r'"restNonce":"([^"]+)"', r.text)
-            if not nonce_match:
-                nonce_match = re.search(r'wpApiSettings\s*=\s*\{[^}]*"nonce"\s*:\s*"([^"]+)"', r.text)
+            # Получаем куки из сессии
+            cookies = session.cookies.get_dict()
+            print(f'[DEBUG] Got cookies from login: {list(cookies.keys())}')
             
-            nonce = nonce_match.group(1) if nonce_match else None
+            # Selenium с куками: открываем пост #1 и ищем флаг
+            flag_value = self._selenium_check_post1_with_cookies(cookies, expected_flag)
             
-            rest_url = f'{self.base_url}/index.php?rest_route=/wp/v2/posts/{post_id}'
-            headers = {}
-            if nonce:
-                headers['X-WP-Nonce'] = nonce
+            if not flag_value:
+                self.checker.cquit(Status.CORRUPT, 'Flag not found in post #1')
             
-            r = session.get(rest_url, headers=headers, timeout=10)
+            print(f'[+] Found flag: {flag_value[:50]}...')
+            return flag_value
             
-            if r.status_code == 200:
-                post_data = r.json()
-                content = post_data.get('content', {}).get('rendered', '')
-                flag_found = re.sub(r'<[^>]+>', '', content)
-                flag_found = flag_found.strip()
-                if flag_found:
-                    return flag_found
-            
-            post_url = f'{self.base_url}/?p={post_id}'
-            r = session.get(post_url, timeout=10)
-            
-            match = re.search(r'<div[^>]*class="[^"]*entry-content[^"]*"[^>]*>(.*?)</div>', r.text, re.DOTALL | re.IGNORECASE)
-            if match:
-                content = match.group(1)
-                flag_found = re.sub(r'<[^>]+>', '', content)
-                flag_found = flag_found.strip()
-                if flag_found:
-                    return flag_found
-
-            self.checker.cquit(Status.CORRUPT, 'Flag not found in post')
-
         except Exception as e:
             self.checker.cquit(Status.MUMBLE, 'get_flag failed', str(e))
 
-    def check_flag_in_post(self, post_id, expected_flag):
-        post_url = f'{self.base_url}/?p={post_id}'
-        r = requests.get(post_url, timeout=10)
+
+    def _selenium_check_post1_with_cookies(self, cookies, expected_flag):
+        """
+        Selenium: 
+        1. Устанавливает куки из requests-сессии
+        2. Открывает пост #1
+        3. Ищет expected_flag в приватных комментариях (внутри .wp-block-comment-content)
+        """
+        from selenium.webdriver.common.by import By
+        import time
         
-        if expected_flag in r.text:
-            return True
-        return False
+        print(f'[*] Starting Selenium check for post #1 with cookies...')
+        driver = None
+        
+        try:
+            driver = self._init_selenium(headless=True)
+            driver.implicitly_wait(0)
+            
+            # Устанавливаем куки
+            driver.get(self.base_url)
+            time.sleep(0.5)
+            
+            for name, value in cookies.items():
+                try:
+                    driver.add_cookie({'name': name, 'value': value, 'domain': self.checker.host})
+                except:
+                    pass
+            
+            # Открываем пост #1
+            post1_url = f'{self.base_url}/?p=1'
+            driver.get(post1_url)
+            time.sleep(1)
+            
+            # Прокрутка вниз
+            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            time.sleep(1)
+            
+            # Ищем приватные комментарии с флагом
+            # Сначала ищем все приватные комментарии
+            private_comments = driver.find_elements(By.CSS_SELECTOR, "li.private-comment")
+            print(f'[DEBUG] Found {len(private_comments)} private comments')
+            
+            for comment in private_comments:
+                try:
+                    # Ищем контент внутри приватного комментария
+                    content_elem = comment.find_element(By.CSS_SELECTOR, ".wp-block-comment-content")
+                    text = content_elem.text.strip()
+                    print(f'[DEBUG] Private comment content: {text[:50]}...')
+                    
+                    if expected_flag and expected_flag in text:
+                        print(f'[+] FOUND FLAG: {text[:50]}...')
+                        return text
+                except:
+                    # Если нет .wp-block-comment-content, берем весь текст комментария
+                    text = comment.text.strip()
+                    print(f'[DEBUG] Full comment text: {text[:80]}...')
+                    if expected_flag and expected_flag in text:
+                        print(f'[+] FOUND FLAG: {text[:50]}...')
+                        return text
+            
+            # Fallback: ищем по всей странице
+            if expected_flag and expected_flag in driver.page_source:
+                print(f'[+] FOUND FLAG in page source')
+                return expected_flag
+            
+            return None
+            
+        except Exception as e:
+            print(f'[-] Selenium error: {e}')
+            raise
+            
+        finally:
+            if driver:
+                driver.quit()
+                print('[*] Browser closed')
+
+    def _selenium_fast_browse(self, username, password, posts, expected_flag):
+        """
+        Асинхронный просмотр постов в Selenium с явной передачей куки для каждого поста.
+        """
+        from selenium.webdriver.common.by import By
+        import time
+        import requests
+        
+        print(f"Starting fast Selenium browse for {len(posts)} posts...")
+        driver = None
+        foundflag = None
+        
+        try:
+            # 1. Получаем свежие куки через проверенный requests-логин
+            session = self.login(username, password)
+            auth_cookies = session.cookies.get_dict()
+            print(f"Got {len(auth_cookies)} auth cookies from requests")
+            print(f"Cookies: {list(auth_cookies.keys())}")
+            
+            # 2. Инициализируем драйвер
+            driver = self._init_selenium(headless=True)
+            driver.set_page_load_timeout(30)
+            
+            # 3. Сначала открываем базовый URL для инициализации домена
+            driver.get(self.base_url)
+            time.sleep(1)
+            
+            # 4. Устанавливаем куки на базовый домен
+            for name, value in auth_cookies.items():
+                try:
+                    driver.add_cookie({
+                        'name': name,
+                        'value': value,
+                        'domain': self.checker.host,  # Точный домен
+                        'path': '/'
+                    })
+                    print(f"[+] Added cookie: {name}")
+                except Exception as e:
+                    print(f"[!] Failed to add cookie {name}: {e}")
+            
+            # Проверяем установку куки
+            current_cookies = driver.get_cookies()
+            print(f"[DEBUG] Cookies after setup: {[c['name'] for c in current_cookies]}")
+            
+            # 5. Цикл по постам
+            for post in posts:
+                if foundflag:
+                    break
+                    
+                post_id = post.get('id')
+                # Используем относительный URL или строим свой
+                postlink = f"{self.base_url}/?p={post_id}"
+                
+                print(f"\n--- Processing post {post_id} ---")
+                
+                # 6. Переходим на пост (куки уже установлены на домен)
+                try:
+                    driver.get(postlink)
+                    time.sleep(2)
+                except Exception as e:
+                    print(f"[!] Failed to load post {post_id}: {e}")
+                    continue
+                
+                # 7. Проверяем, не сбросилась ли авторизация (редирект на логин)
+                current_url = driver.current_url
+                print(f"[DEBUG] Current URL: {current_url}")
+                
+                if 'login' in current_url.lower() or 'page_id=5' in current_url:
+                    print("[!] Redirected to login - session lost, restoring cookies...")
+                    # Восстанавливаем куки
+                    driver.get(self.base_url)
+                    time.sleep(0.5)
+                    for name, value in auth_cookies.items():
+                        try:
+                            driver.add_cookie({
+                                'name': name,
+                                'value': value,
+                                'domain': self.checker.host,
+                                'path': '/'
+                            })
+                        except:
+                            pass
+                    # Пробуем снова
+                    driver.get(postlink)
+                    time.sleep(2)
+                    
+                    # Проверяем еще раз
+                    if 'login' in driver.current_url.lower():
+                        print("[!] Still on login page, skipping post")
+                        continue
+                
+                # 8. Проверяем авторизацию по наличию logout или приветствия
+                page_source = driver.page_source.lower()
+                is_logged_in = any([
+                    'logout' in page_source,
+                    'привет' in page_source,
+                    'welcome' in page_source,
+                    'личный кабинет' in page_source,
+                    'dashboard' in page_source
+                ])
+                print(f"[DEBUG] Logged in indicators: {is_logged_in}")
+                
+                # 9. Прокрутка страницы для загрузки комментариев
+                try:
+                    driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                    time.sleep(1)
+                except Exception as e:
+                    print(f"[!] Scroll error: {e}")
+                
+            
+            print(f"\n[+] Finished browsing {len(posts)} posts")
+            return foundflag
+            
+        except Exception as e:
+            print(f"[-] Selenium error: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
+        finally:
+            if driver:
+                driver.quit()
+                print("[*] Browser closed.")
+
+
+    def _get_all_posts(self):
+        """Получает все посты через REST API (публичные)"""
+        rest_url = f'{self.base_url}/index.php?rest_route=/wp/v2/posts&per_page=100'
+        
+        r = requests.get(rest_url, timeout=10)
+        if r.status_code == 200:
+            return r.json()
+        return []
+
+
+    def _selenium_browse_posts(self, username, password, posts, expected_flag):
+        """
+        Selenium: 
+        1. Логинится
+        2. Ищет флаг в приватных комментариях ВО ВСЕХ постах (не только #1)
+        3. В каждом посте пишет случайный комментарий
+        """
+        from selenium.webdriver.common.by import By
+        from selenium.webdriver.support.ui import WebDriverWait
+        from selenium.webdriver.support import expected_conditions as EC
+        import time
+        
+        print(f'[*] Starting Selenium to browse {len(posts)} posts...')
+        driver = None
+        found_flag = None
+        
+        # Селекторы для приватных комментариев (обновленные)
+        private_selectors = [
+            ".private-comment",
+            ".comment.private", 
+            "li.private-comment",
+            ".wp-block-comment-content",  # контент комментария
+            ".comment-content"
+        ]
+        
+        # Селекторы для формы комментария
+        form_selectors = [  # ← исправлено: form_selectors, не form_selecters
+            "#commentform textarea",
+            "form.comment-form textarea",
+            "#respond form textarea",
+            "textarea#comment",
+            "textarea[name='comment']"
+        ]
+        
+        try:
+            driver = self._init_selenium(headless=True)
+            
+            # Логинимся через фронтенд
+            login_url = f'{self.base_url}/?page_id=5'
+            print(f'[*] Logging in via Selenium')
+            
+            driver.get(login_url)
+            
+            wait = WebDriverWait(driver, 10)
+            username_field = wait.until(EC.presence_of_element_located((By.ID, "username")))
+            password_field = driver.find_element(By.ID, "password")
+            submit_btn = driver.find_element(By.CSS_SELECTOR, "input[type='submit']")
+            
+            username_field.send_keys(username)
+            password_field.send_keys(password)
+            submit_btn.click()
+            
+            time.sleep(3)
+            
+            # Проверяем успешность входа
+            if 'login' in driver.current_url.lower() or 'page_id=5' in driver.current_url:
+                page_source = driver.page_source.lower()
+                if 'logout' not in page_source and 'привет' not in page_source:
+                    raise Exception('Selenium login failed')
+            
+            print('[+] Selenium login successful')
+            
+            # Проходим по ВСЕМ постам в цикле, ищем флаг в каждом
+            for post in posts:
+                post_id = post.get('id')
+                post_link = post.get('link') or f'{self.base_url}/?p={post_id}'
+                
+                print(f'[*] Opening post #{post_id}: {post_link}')
+                driver.get(post_link)
+                time.sleep(2)
+                
+                # Скроллим вниз к комментариям
+                height = driver.execute_script("return document.body.scrollHeight")
+                step = 500
+                current = 0
+                
+                while current < height:
+                    current += step
+                    driver.execute_script(f"window.scrollTo(0, {current});")
+                    time.sleep(0.3)
+                
+                driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                time.sleep(1)
+                
+                # ИЩЕМ ПРИВАТНЫЙ КОММЕНТАРИЙ С ФЛАГОМ в этом посте
+                print(f'[*] Checking for private comments in post #{post_id}...')
+                
+                for selector in private_selectors:
+                    try:
+                        elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                        print(f'[DEBUG] Found {len(elements)} elements with selector {selector}')
+                        
+                        for elem in elements:
+                            text = elem.text.strip()
+                            print(f'[DEBUG] Element text: {text[:100]}...')
+                            
+                            # Проверяем содержит ли текст ожидаемый флаг
+                            if text and expected_flag and expected_flag in text:
+                                print(f'[+] FOUND FLAG in post #{post_id}: {text[:50]}...')
+                                found_flag = text
+                                break
+                            # Или проверяем что это похоже на флаг (длина, формат)
+                            elif text and len(text) > 5 and not found_flag:
+                                print(f'[DEBUG] Potential flag: {text[:50]}...')
+                                
+                    except Exception as e:
+                        print(f'[DEBUG] Error with selector {selector}: {e}')
+                        continue
+                    
+                    if found_flag:
+                        break
+                
+                # Пишем случайный комментарий в этот пост
+                random_comment = self._get_random_comment()
+                print(f'[*] Posting random comment to post #{post_id}: {random_comment[:30]}...')
+                
+                comment_posted = False
+                for selector in form_selectors:  # ← исправлено: form_selectors
+                    try:
+                        comment_field = driver.find_element(By.CSS_SELECTOR, selector)
+                        submit_btn = driver.find_element(By.CSS_SELECTOR, "input[type='submit'], button[type='submit'], #submit")
+                        
+                        comment_field.clear()
+                        comment_field.send_keys(random_comment)
+                        submit_btn.click()
+                        comment_posted = True
+                        print(f'[+] Random comment posted to post #{post_id}')
+                        time.sleep(2)
+                        break
+                    except Exception as e:
+                        print(f'[DEBUG] Could not post with selector {selector}: {e}')
+                        continue
+                
+                if not comment_posted:
+                    print(f'[!] Could not post comment to post #{post_id}')
+                
+                # Если нашли флаг, продолжаем писать комменты в остальные посты
+                # но можно и выйти: if found_flag: break
+            
+            print(f'[+] Finished browsing all posts')
+            return found_flag
+            
+        except Exception as e:
+            print(f'[-] Selenium error: {e}')
+            raise
+            
+        finally:
+            if driver:
+                driver.quit()
+                print('[*] Browser closed')
+
+    
+
+    def _init_selenium(self, headless=True):
+        """Инициализация Selenium драйвера"""
+        from selenium import webdriver
+        from selenium.webdriver.chrome.options import Options
+        from selenium.webdriver.chrome.service import Service
+        
+        chrome_options = Options()
+        
+        if headless:
+            chrome_options.add_argument("--headless")
+        
+        chrome_options.add_argument("--no-sandbox")
+        chrome_options.add_argument("--disable-dev-shm-usage")
+        chrome_options.add_argument("--disable-gpu")
+        chrome_options.add_argument("--window-size=1920,1080")
+        
+        chrome_bin = os.getenv('CHROME_BIN')
+        chromedriver_path = os.getenv('CHROMEDRIVER_PATH')
+        
+        if chrome_bin and chromedriver_path:
+            chrome_options.binary_location = chrome_bin
+            service = Service(chromedriver_path)
+            driver = webdriver.Chrome(service=service, options=chrome_options)
+        else:
+            try:
+                from webdriver_manager.chrome import ChromeDriverManager
+                from selenium.webdriver.chrome.service import Service as ChromeService
+                service = ChromeService(ChromeDriverManager().install())
+                driver = webdriver.Chrome(service=service, options=chrome_options)
+            except ImportError:
+                raise Exception("Install: pip install webdriver-manager")
+        
+        driver.implicitly_wait(10)
+        return driver
 
 
 def main():
     """
     Тестовый запуск чекера без аргументов командной строки.
-    Использует localhost:8080 как цель по умолчанию.
-    Можно переопределить через переменную окружения WP_HOST или изменить DEFAULT_HOST ниже.
     """
     import sys
     import os
     
-    # НАСТРОЙКА: измените здесь хост и порт при необходимости
-    DEFAULT_HOST = "localhost"  # <-- Измените на IP вашего WordPress
-    DEFAULT_PORT = 8080         # <-- Измените порт если нужно
+    DEFAULT_HOST = "localhost"
+    DEFAULT_PORT = 8080
     
-    # Или задайте через переменную окружения: export WP_HOST="192.168.1.100"
     host = os.environ.get('WP_HOST', DEFAULT_HOST)
     port = int(os.environ.get('WP_PORT', str(DEFAULT_PORT)))
     
@@ -397,11 +940,6 @@ def main():
     print(f"Target: http://{host}:{port}")
     print(f"Test Flag ID: {test_flag_id}")
     print(f"Test Flag: {test_flag}")
-    print("=" * 60)
-    print()
-    print("Чтобы изменить хост, задайте переменную окружения:")
-    print('  export WP_HOST="your-host-ip"')
-    print('  export WP_PORT="8080"')
     print("=" * 60)
     
     class TestChecker:
@@ -421,7 +959,6 @@ def main():
     checker = TestChecker(host)
     machine = CheckMachine(checker)
     
-    # Переопределяем base_url с правильным портом
     machine.base_url = f'http://{host}:{port}'
     
     print("\n[1] Testing PING...")
@@ -449,7 +986,7 @@ def main():
     
     print("\n[3] Testing GET FLAG...")
     try:
-        retrieved_flag = machine.get_flag(flag_id, test_flag)  # Передаем test_flag как второй аргумент
+        retrieved_flag = machine.get_flag(flag_id, test_flag)
         print(f"[+] GET OK - Retrieved: {retrieved_flag}")
         
         if retrieved_flag == test_flag:
