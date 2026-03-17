@@ -18,9 +18,9 @@ CREDENTIALS_FILE = '/tmp/wp_ctf_credentials.json'
 
 WP_PATHS = {
     'home': '/',
-    'login': '/?page_id=5',
+    'login': '/login/',
     'admin': '/wp-admin/',
-    'register': '/?page_id=4',
+    'register': '/register/',
     'logout': '/wp-login.php?action=logout',
     'posts': '/?p=1',  
     'xmlrpc': '/xmlrpc.php'
@@ -140,7 +140,7 @@ class CheckMachine:
         """
         Регистрация пользователя через фронтенд-форму на странице ?page_id=4
         """
-        register_url = f'{self.base_url}/?page_id=4'
+        register_url = f'{self.base_url}{WP_PATHS["register"]}'
         
         session = requests.Session()
         
@@ -205,14 +205,14 @@ class CheckMachine:
         
         # Если не удалось определить статус, считаем что успешно
         if 'wp-login.php' not in r.url and 'login' not in r.url.lower():
-            print(f'User {username} probably registered (no error detected)')
+            #print(f'User {username} probably registered (no error detected)')
             return True
         
         raise Exception('Registration failed - unexpected redirect')
     
     def login(self, username, password):
         """Вход через фронтенд-форму на странице ?page_id=5"""
-        login_url = f'{self.base_url}/?page_id=5'
+        login_url = f'{self.base_url}{WP_PATHS["login"]}'
 
         session = requests.Session()
         
@@ -236,8 +236,8 @@ class CheckMachine:
         r = session.post(login_url, data=data, headers=headers, allow_redirects=True, timeout=10)
 
         # Отладка: выводим cookies и URL
-        print(f'[DEBUG] After login: URL={r.url}')
-        print(f'[DEBUG] Cookies: {[f"{c.name}={c.value[:20]}..." for c in session.cookies]}')
+        #print(f'[DEBUG] After login: URL={r.url}')
+        #print(f'[DEBUG] Cookies: {[f"{c.name}={c.value[:20]}..." for c in session.cookies]}')
         
         # Проверяем наличие auth cookie WordPress
         has_auth = False
@@ -257,8 +257,8 @@ class CheckMachine:
             'wp-admin' in r.url,
         ])
         
-        print(f'[DEBUG] has_auth cookie: {has_auth}')
-        print(f'[DEBUG] has_welcome content: {has_welcome}')
+        #print(f'[DEBUG] has_auth cookie: {has_auth}')
+        #print(f'[DEBUG] has_welcome content: {has_welcome}')
         
         if not has_auth and not has_welcome:
             # Проверяем ошибки
@@ -301,13 +301,14 @@ class CheckMachine:
             # Публичный пост с title=flag_id
             random_content = self._get_random_comment()
             post_id = self._create_public_post(flag_id, random_content)
-            print(f'[+] Created public post #{post_id} with title={flag_id}')
+            #print(f'[+] Created public post #{post_id} with title={flag_id}')
             
             # ПРИВАТНЫЙ КОММЕНТАРИЙ С ФЛАГОМ К ПОСТУ №1 ЧЕРЕЗ REST API
             self._post_private_comment_rest(1, flag)
-            print(f'[+] Posted private comment with flag to post #1 via REST')
             
-            return username
+            #print(f'[+] Posted private comment with flag to post #1 via REST')
+            
+            return username[5:]
             
         except Exception as e:
             self.checker.cquit(Status.MUMBLE, 'put_flag failed', str(e))
@@ -389,7 +390,7 @@ class CheckMachine:
         if not nonce:
             raise Exception(f'Could not get REST API nonce')
         
-        print(f'[+] Got REST nonce: {nonce}')
+        #print(f'[+] Got REST nonce: {nonce}')
         
         # Создаем публичный пост
         rest_url = f'{self.base_url}/index.php?rest_route=/wp/v2/posts'
@@ -462,11 +463,11 @@ class CheckMachine:
             # Проверяем, что комментарий появился
             check_r = self.session.get(post_url, timeout=10)
             if flag in check_r.text:
-                print(f'[+] Private comment verified on post #{post_id}')
+                #print(f'[+] Private comment verified on post #{post_id}')
                 return True
             else:
                 # Может быть moderation
-                print(f'[!] Comment posted but flag not visible (may be pending moderation)')
+                #print(f'[!] Comment posted but flag not visible (may be pending moderation)')
                 return True
         
         raise Exception(f'Failed to post comment: {r.status_code}')
@@ -481,11 +482,11 @@ class CheckMachine:
         password = flag_id[:20]
         expected_flag = flag  # flag_value из параметра
         
-        print(f'[DEBUG] get_flag: flag_id={flag_id}, username={username}, expected_flag={expected_flag}')
+        #print(f'[DEBUG] get_flag: flag_id={flag_id}, username={username}, expected_flag={expected_flag}')
         
         try:
             posts = self._get_all_posts()
-            print(f'[+] Found {len(posts)} posts via REST API')
+            #print(f'[+] Found {len(posts)} posts via REST API')
             
             if not posts:
                 self.checker.cquit(Status.CORRUPT, 'No posts found')
@@ -495,7 +496,7 @@ class CheckMachine:
             
             # Возвращаем expected_flag — checker.py сам проверит через assert_eq
         except Exception as e:
-            self.checker.cquit(Status.MUMBLE, 'browse all posts failed', str(e))
+            self.checker.cquit(Status.MUMBLE, 'Cant get flag', str(e))
 
 
         try:
@@ -505,7 +506,7 @@ class CheckMachine:
             
             # Получаем куки из сессии
             cookies = session.cookies.get_dict()
-            print(f'[DEBUG] Got cookies from login: {list(cookies.keys())}')
+            #print(f'[DEBUG] Got cookies from login: {list(cookies.keys())}')
             
             # Selenium с куками: открываем пост #1 и ищем флаг
             flag_value = self._selenium_check_post1_with_cookies(cookies, expected_flag)
@@ -513,7 +514,7 @@ class CheckMachine:
             if not flag_value:
                 self.checker.cquit(Status.CORRUPT, 'Flag not found in post #1')
             
-            print(f'[+] Found flag: {flag_value[:50]}...')
+            #print(f'[+] Found flag: {flag_value[:50]}...')
             return flag_value
             
         except Exception as e:
@@ -530,7 +531,7 @@ class CheckMachine:
         from selenium.webdriver.common.by import By
         import time
         
-        print(f'[*] Starting Selenium check for post #1 with cookies...')
+        #print(f'[*] Starting Selenium check for post #1 with cookies...')
         driver = None
         
         try:
@@ -559,41 +560,40 @@ class CheckMachine:
             # Ищем приватные комментарии с флагом
             # Сначала ищем все приватные комментарии
             private_comments = driver.find_elements(By.CSS_SELECTOR, "li.private-comment")
-            print(f'[DEBUG] Found {len(private_comments)} private comments')
+            #print(f'[DEBUG] Found {len(private_comments)} private comments')
             
             for comment in private_comments:
                 try:
                     # Ищем контент внутри приватного комментария
                     content_elem = comment.find_element(By.CSS_SELECTOR, ".wp-block-comment-content")
                     text = content_elem.text.strip()
-                    print(f'[DEBUG] Private comment content: {text[:50]}...')
+                    #print(f'[DEBUG] Private comment content: {text[:50]}...')
                     
                     if expected_flag and expected_flag in text:
-                        print(f'[+] FOUND FLAG: {text[:50]}...')
+                        #print(f'[+] FOUND FLAG: {text[:50]}...')
                         return text
                 except:
                     # Если нет .wp-block-comment-content, берем весь текст комментария
                     text = comment.text.strip()
-                    print(f'[DEBUG] Full comment text: {text[:80]}...')
+                    #print(f'[DEBUG] Full comment text: {text[:80]}...')
                     if expected_flag and expected_flag in text:
-                        print(f'[+] FOUND FLAG: {text[:50]}...')
+                        #print(f'[+] FOUND FLAG: {text[:50]}...')
                         return text
             
             # Fallback: ищем по всей странице
             if expected_flag and expected_flag in driver.page_source:
-                print(f'[+] FOUND FLAG in page source')
+                #print(f'[+] FOUND FLAG in page source')
                 return expected_flag
-            
             return None
             
         except Exception as e:
-            print(f'[-] Selenium error: {e}')
+            self.checker.cquit(Status.MUMBLE, 'check post 1 failed', str(e))
             raise
             
         finally:
             if driver:
                 driver.quit()
-                print('[*] Browser closed')
+                #print('[*] Browser closed')
 
     def _selenium_fast_browse(self, username, password, posts, expected_flag):
         """
@@ -603,7 +603,7 @@ class CheckMachine:
         import time
         import requests
         
-        print(f"Starting fast Selenium browse for {len(posts)} posts...")
+        #print(f"Starting fast Selenium browse for {len(posts)} posts...")
         driver = None
         foundflag = None
         
@@ -611,8 +611,8 @@ class CheckMachine:
             # 1. Получаем свежие куки через проверенный requests-логин
             session = self.login(username, password)
             auth_cookies = session.cookies.get_dict()
-            print(f"Got {len(auth_cookies)} auth cookies from requests")
-            print(f"Cookies: {list(auth_cookies.keys())}")
+            #print(f"Got {len(auth_cookies)} auth cookies from requests")
+            #print(f"Cookies: {list(auth_cookies.keys())}")
             
             # 2. Инициализируем драйвер
             driver = self._init_selenium(headless=True)
@@ -631,13 +631,14 @@ class CheckMachine:
                         'domain': self.checker.host,  # Точный домен
                         'path': '/'
                     })
-                    print(f"[+] Added cookie: {name}")
+                    #print(f"[+] Added cookie: {name}")
                 except Exception as e:
-                    print(f"[!] Failed to add cookie {name}: {e}")
+                    self.checker.cquit(Status.MUMBLE, 'Failed to add cookie', str(e))
+                    #print(f"[!] Failed to add cookie {name}: {e}")
             
             # Проверяем установку куки
             current_cookies = driver.get_cookies()
-            print(f"[DEBUG] Cookies after setup: {[c['name'] for c in current_cookies]}")
+            #print(f"[DEBUG] Cookies after setup: {[c['name'] for c in current_cookies]}")
             
             # 5. Цикл по постам
             for post in posts:
@@ -648,22 +649,23 @@ class CheckMachine:
                 # Используем относительный URL или строим свой
                 postlink = f"{self.base_url}/?p={post_id}"
                 
-                print(f"\n--- Processing post {post_id} ---")
+                #print(f"\n--- Processing post {post_id} ---")
                 
                 # 6. Переходим на пост (куки уже установлены на домен)
                 try:
                     driver.get(postlink)
                     time.sleep(2)
                 except Exception as e:
-                    print(f"[!] Failed to load post {post_id}: {e}")
+                    self.checker.cquit(Status.MUMBLE, 'Cant get post {post_id}', str(e))
+                    #print(f"[!] Failed to load post {post_id}: {e}")
                     continue
                 
                 # 7. Проверяем, не сбросилась ли авторизация (редирект на логин)
                 current_url = driver.current_url
-                print(f"[DEBUG] Current URL: {current_url}")
+                #print(f"[DEBUG] Current URL: {current_url}")
                 
                 if 'login' in current_url.lower() or 'page_id=5' in current_url:
-                    print("[!] Redirected to login - session lost, restoring cookies...")
+                    #print("[!] Redirected to login - session lost, restoring cookies...")
                     # Восстанавливаем куки
                     driver.get(self.base_url)
                     time.sleep(0.5)
@@ -683,7 +685,7 @@ class CheckMachine:
                     
                     # Проверяем еще раз
                     if 'login' in driver.current_url.lower():
-                        print("[!] Still on login page, skipping post")
+                        #print("[!] Still on login page, skipping post")
                         continue
                 
                 # 8. Проверяем авторизацию по наличию logout или приветствия
@@ -695,28 +697,30 @@ class CheckMachine:
                     'личный кабинет' in page_source,
                     'dashboard' in page_source
                 ])
-                print(f"[DEBUG] Logged in indicators: {is_logged_in}")
+                #print(f"[DEBUG] Logged in indicators: {is_logged_in}")
                 
                 # 9. Прокрутка страницы для загрузки комментариев
                 try:
                     driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
                     time.sleep(1)
                 except Exception as e:
-                    print(f"[!] Scroll error: {e}")
+                    self.checker.cquit(Status.MUMBLE, 'Reading posts error', str(e))
+                    #print(f"[!] Scroll error: {e}")
                 
             
-            print(f"\n[+] Finished browsing {len(posts)} posts")
+            #print(f"\n[+] Finished browsing {len(posts)} posts")
             return foundflag
             
         except Exception as e:
-            print(f"[-] Selenium error: {e}")
+            self.checker.cquit(Status.MUMBLE, 'Error reading posts', str(e))
+            #print(f"[-] Selenium error: {e}")
             import traceback
             traceback.print_exc()
             raise
         finally:
             if driver:
                 driver.quit()
-                print("[*] Browser closed.")
+                #print("[*] Browser closed.")
 
 
     def _get_all_posts(self):
@@ -741,7 +745,7 @@ class CheckMachine:
         from selenium.webdriver.support import expected_conditions as EC
         import time
         
-        print(f'[*] Starting Selenium to browse {len(posts)} posts...')
+        #print(f'[*] Starting Selenium to browse {len(posts)} posts...')
         driver = None
         found_flag = None
         
@@ -767,8 +771,8 @@ class CheckMachine:
             driver = self._init_selenium(headless=True)
             
             # Логинимся через фронтенд
-            login_url = f'{self.base_url}/?page_id=5'
-            print(f'[*] Logging in via Selenium')
+            login_url = f'{self.base_url}{WP_PATHS["login"]}'
+            #print(f'[*] Logging in via Selenium')
             
             driver.get(login_url)
             
@@ -789,14 +793,14 @@ class CheckMachine:
                 if 'logout' not in page_source and 'привет' not in page_source:
                     raise Exception('Selenium login failed')
             
-            print('[+] Selenium login successful')
+            #print('[+] Selenium login successful')
             
             # Проходим по ВСЕМ постам в цикле, ищем флаг в каждом
             for post in posts:
                 post_id = post.get('id')
                 post_link = post.get('link') or f'{self.base_url}/?p={post_id}'
                 
-                print(f'[*] Opening post #{post_id}: {post_link}')
+               #print(f'[*] Opening post #{post_id}: {post_link}')
                 driver.get(post_link)
                 time.sleep(2)
                 
@@ -814,28 +818,30 @@ class CheckMachine:
                 time.sleep(1)
                 
                 # ИЩЕМ ПРИВАТНЫЙ КОММЕНТАРИЙ С ФЛАГОМ в этом посте
-                print(f'[*] Checking for private comments in post #{post_id}...')
+                #print(f'[*] Checking for private comments in post #{post_id}...')
                 
                 for selector in private_selectors:
                     try:
                         elements = driver.find_elements(By.CSS_SELECTOR, selector)
-                        print(f'[DEBUG] Found {len(elements)} elements with selector {selector}')
+                        #print(f'[DEBUG] Found {len(elements)} elements with selector {selector}')
                         
                         for elem in elements:
                             text = elem.text.strip()
-                            print(f'[DEBUG] Element text: {text[:100]}...')
+                            #print(f'[DEBUG] Element text: {text[:100]}...')
                             
                             # Проверяем содержит ли текст ожидаемый флаг
                             if text and expected_flag and expected_flag in text:
-                                print(f'[+] FOUND FLAG in post #{post_id}: {text[:50]}...')
+                                #print(f'[+] FOUND FLAG in post #{post_id}: {text[:50]}...')
                                 found_flag = text
                                 break
                             # Или проверяем что это похоже на флаг (длина, формат)
                             elif text and len(text) > 5 and not found_flag:
-                                print(f'[DEBUG] Potential flag: {text[:50]}...')
+                                None
+                                #print(f'[DEBUG] Potential flag: {text[:50]}...')
                                 
                     except Exception as e:
-                        print(f'[DEBUG] Error with selector {selector}: {e}')
+                        self.checker.cquit(Status.MUMBLE, 'Error with selector {selector}', str(e))
+                        #print(f'[DEBUG] Error with selector {selector}: {e}')
                         continue
                     
                     if found_flag:
@@ -843,7 +849,7 @@ class CheckMachine:
                 
                 # Пишем случайный комментарий в этот пост
                 random_comment = self._get_random_comment()
-                print(f'[*] Posting random comment to post #{post_id}: {random_comment[:30]}...')
+                #print(f'[*] Posting random comment to post #{post_id}: {random_comment[:30]}...')
                 
                 comment_posted = False
                 for selector in form_selectors:  # ← исправлено: form_selectors
@@ -855,30 +861,32 @@ class CheckMachine:
                         comment_field.send_keys(random_comment)
                         submit_btn.click()
                         comment_posted = True
-                        print(f'[+] Random comment posted to post #{post_id}')
+                        #print(f'[+] Random comment posted to post #{post_id}')
                         time.sleep(2)
                         break
                     except Exception as e:
-                        print(f'[DEBUG] Could not post with selector {selector}: {e}')
+                        self.checker.cquit(Status.MUMBLE, 'Could not post with selector {selector}', str(e))
+                        #print(f'[DEBUG] Could not post with selector {selector}: {e}')
                         continue
                 
                 if not comment_posted:
-                    print(f'[!] Could not post comment to post #{post_id}')
+                    #print(f'[!] Could not post comment to post #{post_id}')
                 
                 # Если нашли флаг, продолжаем писать комменты в остальные посты
                 # но можно и выйти: if found_flag: break
             
-            print(f'[+] Finished browsing all posts')
-            return found_flag
+            #print(f'[+] Finished browsing all posts')
+                    return found_flag
             
         except Exception as e:
-            print(f'[-] Selenium error: {e}')
+            self.checker.cquit(Status.MUMBLE, 'Error while reading posts', str(e))
+            #print(f'[-] Selenium error: {e}')
             raise
             
         finally:
             if driver:
                 driver.quit()
-                print('[*] Browser closed')
+                #print('[*] Browser closed')
 
     
 
@@ -934,6 +942,7 @@ def main():
     test_flag_id = "test_flag_12345"
     test_flag = "CTF{test_flag_12345678901234567890}"
     
+    '''
     print("=" * 60)
     print("WordPress CTF Checker - Test Mode")
     print("=" * 60)
@@ -941,15 +950,17 @@ def main():
     print(f"Test Flag ID: {test_flag_id}")
     print(f"Test Flag: {test_flag}")
     print("=" * 60)
+    '''
     
     class TestChecker:
         def __init__(self, host):
             self.host = host
             
         def cquit(self, status, public='', private=''):
-            print(f"[Status: {status}] {public}")
+            #print(f"[Status: {status}] {public}")
             if private:
-                print(f"  Private: {private}")
+                None 
+                #print(f"  Private: {private}")
             sys.exit(0)
             
         def check_response(self, response, message):
@@ -961,56 +972,60 @@ def main():
     
     machine.base_url = f'http://{host}:{port}'
     
-    print("\n[1] Testing PING...")
+    #print("\n[1] Testing PING...")
     try:
         machine.ping()
-        print("[+] PING OK - WordPress is accessible")
+       # print("[+] PING OK - WordPress is accessible")
     except SystemExit:
-        print("[-] PING FAILED")
+        #print("[-] PING FAILED")
         return
     except Exception as e:
-        print(f"[-] PING ERROR: {e}")
+        #print(f"[-] PING ERROR: {e}")
         return
     
-    print("\n[2] Testing PUT FLAG...")
+    #print("\n[2] Testing PUT FLAG...")
     try:
         result = machine.put_flag(test_flag_id, test_flag)
-        print(f"[+] PUT OK - Returned: {result}")
+       #print(f"[+] PUT OK - Returned: {result}")
         flag_id = result
     except SystemExit:
-        print(f"[-] PUT FAILED")
+        #print(f"[-] PUT FAILED")
         return
     except Exception as e:
-        print(f"[-] PUT ERROR: {e}")
+        #print(f"[-] PUT ERROR: {e}")
         return
     
-    print("\n[3] Testing GET FLAG...")
+    #print("\n[3] Testing GET FLAG...")
     try:
         retrieved_flag = machine.get_flag(flag_id, test_flag)
-        print(f"[+] GET OK - Retrieved: {retrieved_flag}")
+        #print(f"[+] GET OK - Retrieved: {retrieved_flag}")
         
         if retrieved_flag == test_flag:
-            print("[+] FLAG VERIFICATION: SUCCESS - Flags match!")
+            None
+            #print("[+] FLAG VERIFICATION: SUCCESS - Flags match!")
         else:
-            print(f"[-] FLAG VERIFICATION: FAILED")
-            print(f"    Expected: {test_flag}")
-            print(f"    Got:      {retrieved_flag}")
+            None
+            #print(f"[-] FLAG VERIFICATION: FAILED")
+            #print(f"    Expected: {test_flag}")
+            #print(f"    Got:      {retrieved_flag}")
     except SystemExit:
-        print(f"[-] GET FAILED")
+        #print(f"[-] GET FAILED")
         return
     except Exception as e:
-        print(f"[-] GET ERROR: {e}")
+        #print(f"[-] GET ERROR: {e}")
         return
     
+    '''
     print("\n" + "=" * 60)
     print("All tests completed!")
     print("=" * 60)
-
+    '''
 
 if __name__ == '__main__':
     import sys
     if len(sys.argv) <= 1:
         main()
     else:
-        print("Use: python3 checker.py <action> <host> <flag_id> <flag> <vuln>")
-        print("Or run without arguments for test mode")
+        None
+        #print("Use: python3 checker.py <action> <host> <flag_id> <flag> <vuln>")
+        #print("Or run without arguments for test mode")

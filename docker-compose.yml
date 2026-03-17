@@ -64,18 +64,24 @@ services:
         
         wp plugin activate custom-registration --allow-root &&
         
-        echo 'Creating registration page...' &&
-        if ! wp post list --post_type=page --name=register --field=ID --allow-root 2>/dev/null | grep -q '[0-9]'; then
-          wp post create --post_title='Register' --post_content='[custom_register]' --post_status=publish --post_type=page --comment_status=closed --allow-root
-        else
-          echo 'Register page already exists'
+        echo 'Setting up pages...' &&
+        
+        REGISTER_ID=$$(wp post list --post_type=page --name=register --field=ID --allow-root 2>/dev/null) &&
+        if [ -n \"$$REGISTER_ID\" ]; then
+          wp post delete $$REGISTER_ID --force --allow-root
         fi &&
         
-        if ! wp post list --post_type=page --name=login --field=ID --allow-root 2>/dev/null | grep -q '[0-9]'; then
-          wp post create --post_title='Login' --post_content='[custom_login]' --post_status=publish --post_type=page --comment_status=closed --allow-root
-        else
-          echo 'Login page already exists'
+        LOGIN_ID=$$(wp post list --post_type=page --name=login --field=ID --allow-root 2>/dev/null) &&
+        if [ -n \"$$LOGIN_ID\" ]; then
+          wp post delete $$LOGIN_ID --force --allow-root
         fi &&
+        
+        wp post create --post_title='Register' --post_content='[custom_register]' --post_status=publish --post_type=page --post_name=register --comment_status=closed --allow-root &&
+        
+        wp post create --post_title='Login' --post_content='[custom_login]' --post_status=publish --post_type=page --post_name=login --comment_status=closed --allow-root &&
+        
+        wp rewrite structure '/%postname%/' --allow-root &&
+        wp rewrite flush --allow-root &&
         
         mkdir -p /var/www/html/wp-content/mu-plugins &&
         cp /tmp/mod.php /var/www/html/wp-content/mu-plugins/mod.php &&
