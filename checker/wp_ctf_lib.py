@@ -12,7 +12,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 
-PORT = 8080 
+PORT = 8081
 
 CREDENTIALS_FILE = '/tmp/wp_ctf_credentials.json'
 
@@ -282,7 +282,7 @@ class CheckMachine:
         2. Публичный пост с title=flag_id
         3. Приватный комментарий с флагом к ПОСТУ №1 через REST API
         """
-        username = f'user_{flag_id[:8]}'
+        username = f'user_{flag_id[:32]}'
         password = flag_id[:20]
         email = f'{username}@local.local'
         
@@ -478,7 +478,7 @@ class CheckMachine:
         2. Selenium с куками: открывает пост #1
         3. Ищет flag_value в приватных комментариях поста #1
         """
-        username = f'user_{flag_id[:8]}'
+        username = f'user_{flag_id[:32]}'
         password = flag_id[:20]
         expected_flag = flag  # flag_value из параметра
         
