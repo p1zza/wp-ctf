@@ -282,8 +282,8 @@ class CheckMachine:
         2. Публичный пост с title=flag_id
         3. Приватный комментарий с флагом к ПОСТУ №1 через REST API
         """
-        username = f'user_{flag_id[:32]}'
-        password = flag_id[:20]
+        username = f'user_{flag_id[:36]}'
+        password = flag_id[:36]
         email = f'{username}@local.local'
         
         self._save_credentials(username, password, flag)
@@ -308,7 +308,7 @@ class CheckMachine:
             
             #print(f'[+] Posted private comment with flag to post #1 via REST')
             
-            return username[5:]
+            return username[32:]
             
         except Exception as e:
             self.checker.cquit(Status.MUMBLE, 'put_flag failed', str(e))
@@ -478,8 +478,8 @@ class CheckMachine:
         2. Selenium с куками: открывает пост #1
         3. Ищет flag_value в приватных комментариях поста #1
         """
-        username = f'user_{flag_id[:32]}'
-        password = flag_id[:20]
+        username = f'user_{flag_id[:36]}'
+        password = flag_id[:36]
         expected_flag = flag  # flag_value из параметра
         
         #print(f'[DEBUG] get_flag: flag_id={flag_id}, username={username}, expected_flag={expected_flag}')
@@ -496,7 +496,7 @@ class CheckMachine:
             
             # Возвращаем expected_flag — checker.py сам проверит через assert_eq
         except Exception as e:
-            self.checker.cquit(Status.MUMBLE, 'Cant get flag', str(e))
+            self.checker.cquit(Status.CORRUPT, 'Cant get flag', str(e))
 
 
         try:
@@ -518,7 +518,7 @@ class CheckMachine:
             return flag_value
             
         except Exception as e:
-            self.checker.cquit(Status.MUMBLE, 'get_flag failed', str(e))
+            self.checker.cquit(Status.CORRUPT, 'get_flag failed', str(e))
 
 
     def _selenium_check_post1_with_cookies(self, cookies, expected_flag):
