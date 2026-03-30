@@ -133,7 +133,7 @@ class CheckMachine:
         if not has_auth:
             raise Exception('No wordpress_logged_in cookie found. Login failed.')
         
-        print(f'Login successful. Got cookies: {[c.name for c in session.cookies]}')
+        #print(f'Login successful. Got cookies: {[c.name for c in session.cookies]}')
         return session
 
     def register(self, username, password, email=None, role='author'):    
@@ -179,7 +179,7 @@ class CheckMachine:
         
         if any(indicator if isinstance(indicator, bool) else indicator in response_text 
             for indicator in success_indicators):
-            print(f'User {username} registered successfully via frontend')
+            #print(f'User {username} registered successfully via frontend')
             return True
         
         # Пользователь уже существует
@@ -193,7 +193,7 @@ class CheckMachine:
         ]
         
         if any(indicator in response_text for indicator in exists_indicators):
-            print(f'User {username} already exists')
+            #print(f'User {username} already exists')
             return 'exists'
         
         # Ошибка регистрации
@@ -282,11 +282,11 @@ class CheckMachine:
         2. Публичный пост с title=flag_id
         3. Приватный комментарий с флагом к ПОСТУ №1 через REST API
         """
-        username = f'user_{flag_id[:36]}'
+        username = f'{flag_id}'
         password = flag_id[:36]
         email = f'{username}@local.local'
         
-        self._save_credentials(username, password, flag)
+        #self._save_credentials(username, password, flag)
         
         try:
             # Регистрация и логин
@@ -308,7 +308,7 @@ class CheckMachine:
             
             #print(f'[+] Posted private comment with flag to post #1 via REST')
             
-            return username[32:]
+            return username
             
         except Exception as e:
             self.checker.cquit(Status.MUMBLE, 'put_flag failed', str(e))
@@ -478,7 +478,7 @@ class CheckMachine:
         2. Selenium с куками: открывает пост #1
         3. Ищет flag_value в приватных комментариях поста #1
         """
-        username = f'user_{flag_id[:36]}'
+        username = f'{flag_id}'
         password = flag_id[:36]
         expected_flag = flag  # flag_value из параметра
         
@@ -640,74 +640,79 @@ class CheckMachine:
             current_cookies = driver.get_cookies()
             #print(f"[DEBUG] Cookies after setup: {[c['name'] for c in current_cookies]}")
             
+            iter = 0
             # 5. Цикл по постам
             for post in posts:
-                if foundflag:
-                    break
-                    
-                post_id = post.get('id')
-                # Используем относительный URL или строим свой
-                postlink = f"{self.base_url}/?p={post_id}"
-                
-                #print(f"\n--- Processing post {post_id} ---")
-                
-                # 6. Переходим на пост (куки уже установлены на домен)
-                try:
-                    driver.get(postlink)
-                    time.sleep(2)
-                except Exception as e:
-                    self.checker.cquit(Status.MUMBLE, 'Cant get post {post_id}', str(e))
-                    #print(f"[!] Failed to load post {post_id}: {e}")
-                    continue
-                
-                # 7. Проверяем, не сбросилась ли авторизация (редирект на логин)
-                current_url = driver.current_url
-                #print(f"[DEBUG] Current URL: {current_url}")
-                
-                if 'login' in current_url.lower() or 'page_id=5' in current_url:
-                    #print("[!] Redirected to login - session lost, restoring cookies...")
-                    # Восстанавливаем куки
-                    driver.get(self.base_url)
-                    time.sleep(0.5)
-                    for name, value in auth_cookies.items():
+                        if foundflag:
+                            break
+                        
+                        if iter >5:
+                            break
+                        post_id = post.get('id')
+                        # Используем относительный URL или строим свой
+                        postlink = f"{self.base_url}/?p={post_id}"
+                        
+                        #print(f"\n--- Processing post {post_id} ---")
+                        
+                        # 6. Переходим на пост (куки уже установлены на домен)
                         try:
-                            driver.add_cookie({
-                                'name': name,
-                                'value': value,
-                                'domain': self.checker.host,
-                                'path': '/'
-                            })
-                        except:
-                            pass
-                    # Пробуем снова
-                    driver.get(postlink)
-                    time.sleep(2)
+                            driver.get(postlink)
+                            time.sleep(0.1)
+                            iter+=1
+                            #print(f"Current iter: {iter}") 
+                        except Exception as e:
+                            self.checker.cquit(Status.MUMBLE, 'Cant get post {post_id}', str(e))
+                            ##print(f"[!] Failed to load post {post_id}: {e}")
+                            continue
+                        
+                        # 7. Проверяем, не сбросилась ли авторизация (редирект на логин)
+                        current_url = driver.current_url
+                        #print(f"[DEBUG] Current URL: {current_url}")
+                        
+                        if 'login' in current_url.lower() or 'page_id=5' in current_url:
+                            #print("[!] Redirected to login - session lost, restoring cookies...")
+                            # Восстанавливаем куки
+                            driver.get(self.base_url)
+                            time.sleep(0.1)
+                            for name, value in auth_cookies.items():
+                                try:
+                                    driver.add_cookie({
+                                        'name': name,
+                                        'value': value,
+                                        'domain': self.checker.host,
+                                        'path': '/'
+                                    })
+                                except:
+                                    pass
+                            # Пробуем снова
+                            driver.get(postlink)
+                            time.sleep(0.1)
+                            
+                            # Проверяем еще раз
+                            if 'login' in driver.current_url.lower():
+                                #print("[!] Still on login page, skipping post")
+                                continue
+                        
+                        # 8. Проверяем авторизацию по наличию logout или приветствия
+                        page_source = driver.page_source.lower()
+                        is_logged_in = any([
+                            'logout' in page_source,
+                            'привет' in page_source,
+                            'welcome' in page_source,
+                            'личный кабинет' in page_source,
+                            'dashboard' in page_source
+                        ])
+                        #print(f"[DEBUG] Logged in indicators: {is_logged_in}")
+                        
+                        # 9. Прокрутка страницы для загрузки комментариев
+                        try:
+                            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                            time.sleep(1)
+                        except Exception as e:
+                            self.checker.cquit(Status.MUMBLE, 'Reading posts error', str(e))
+                            #print(f"[!] Scroll error: {e}")
+                        
                     
-                    # Проверяем еще раз
-                    if 'login' in driver.current_url.lower():
-                        #print("[!] Still on login page, skipping post")
-                        continue
-                
-                # 8. Проверяем авторизацию по наличию logout или приветствия
-                page_source = driver.page_source.lower()
-                is_logged_in = any([
-                    'logout' in page_source,
-                    'привет' in page_source,
-                    'welcome' in page_source,
-                    'личный кабинет' in page_source,
-                    'dashboard' in page_source
-                ])
-                #print(f"[DEBUG] Logged in indicators: {is_logged_in}")
-                
-                # 9. Прокрутка страницы для загрузки комментариев
-                try:
-                    driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-                    time.sleep(1)
-                except Exception as e:
-                    self.checker.cquit(Status.MUMBLE, 'Reading posts error', str(e))
-                    #print(f"[!] Scroll error: {e}")
-                
-            
             #print(f"\n[+] Finished browsing {len(posts)} posts")
             return foundflag
             
@@ -800,7 +805,7 @@ class CheckMachine:
                 post_id = post.get('id')
                 post_link = post.get('link') or f'{self.base_url}/?p={post_id}'
                 
-               #print(f'[*] Opening post #{post_id}: {post_link}')
+                #print(f'[*] Opening post #{post_id}: {post_link}')
                 driver.get(post_link)
                 time.sleep(2)
                 
@@ -836,8 +841,8 @@ class CheckMachine:
                                 break
                             # Или проверяем что это похоже на флаг (длина, формат)
                             elif text and len(text) > 5 and not found_flag:
-                                None
                                 #print(f'[DEBUG] Potential flag: {text[:50]}...')
+                                None
                                 
                     except Exception as e:
                         self.checker.cquit(Status.MUMBLE, 'Error with selector {selector}', str(e))
@@ -875,7 +880,7 @@ class CheckMachine:
                 # Если нашли флаг, продолжаем писать комменты в остальные посты
                 # но можно и выйти: if found_flag: break
             
-            #print(f'[+] Finished browsing all posts')
+                    #print(f'[+] Finished browsing all posts')
                     return found_flag
             
         except Exception as e:
@@ -904,7 +909,6 @@ class CheckMachine:
         chrome_options.add_argument("--no-sandbox")
         chrome_options.add_argument("--disable-dev-shm-usage")
         chrome_options.add_argument("--disable-gpu")
-        chrome_options.add_argument("--window-size=1920,1080")
         
         chrome_bin = os.getenv('CHROME_BIN')
         chromedriver_path = os.getenv('CHROMEDRIVER_PATH')
@@ -921,6 +925,9 @@ class CheckMachine:
                 driver = webdriver.Chrome(service=service, options=chrome_options)
             except ImportError:
                 raise Exception("Install: pip install webdriver-manager")
+        
+            except Exception as e:
+                raise Exception(f"Exception on init_selenium{e.args()}")
         
         driver.implicitly_wait(10)
         return driver
@@ -943,13 +950,13 @@ def main():
     test_flag = "CTF{test_flag_12345678901234567890}"
     
     '''
-    print("=" * 60)
-    print("WordPress CTF Checker - Test Mode")
-    print("=" * 60)
-    print(f"Target: http://{host}:{port}")
-    print(f"Test Flag ID: {test_flag_id}")
-    print(f"Test Flag: {test_flag}")
-    print("=" * 60)
+    #print("=" * 60)
+    #print("WordPress CTF Checker - Test Mode")
+    #print("=" * 60)
+    #print(f"Target: http://{host}:{port}")
+    #print(f"Test Flag ID: {test_flag_id}")
+    #print(f"Test Flag: {test_flag}")
+    #print("=" * 60)
     '''
     
     class TestChecker:
@@ -959,8 +966,8 @@ def main():
         def cquit(self, status, public='', private=''):
             #print(f"[Status: {status}] {public}")
             if private:
-                None 
                 #print(f"  Private: {private}")
+                None 
             sys.exit(0)
             
         def check_response(self, response, message):
@@ -975,7 +982,7 @@ def main():
     #print("\n[1] Testing PING...")
     try:
         machine.ping()
-       # print("[+] PING OK - WordPress is accessible")
+       # #print("[+] PING OK - WordPress is accessible")
     except SystemExit:
         #print("[-] PING FAILED")
         return
@@ -986,7 +993,7 @@ def main():
     #print("\n[2] Testing PUT FLAG...")
     try:
         result = machine.put_flag(test_flag_id, test_flag)
-       #print(f"[+] PUT OK - Returned: {result}")
+        #print(f"[+] PUT OK - Returned: {result}")
         flag_id = result
     except SystemExit:
         #print(f"[-] PUT FAILED")
@@ -1001,13 +1008,13 @@ def main():
         #print(f"[+] GET OK - Retrieved: {retrieved_flag}")
         
         if retrieved_flag == test_flag:
-            None
             #print("[+] FLAG VERIFICATION: SUCCESS - Flags match!")
-        else:
             None
+        else:
             #print(f"[-] FLAG VERIFICATION: FAILED")
             #print(f"    Expected: {test_flag}")
             #print(f"    Got:      {retrieved_flag}")
+            None
     except SystemExit:
         #print(f"[-] GET FAILED")
         return
@@ -1016,9 +1023,9 @@ def main():
         return
     
     '''
-    print("\n" + "=" * 60)
-    print("All tests completed!")
-    print("=" * 60)
+    #print("\n" + "=" * 60)
+    #print("All tests completed!")
+    #print("=" * 60)
     '''
 
 if __name__ == '__main__':

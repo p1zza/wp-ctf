@@ -1,0 +1,42 @@
+FROM python:3.13.5-slim
+
+ENV DOCKER_CONTAINER=1
+RUN apt-get update && apt-get install -y \
+    wget \
+    gnupg \
+    unzip \
+    chromium \
+    chromium-driver \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir selenium requests beautifulsoup4 lxml checklib
+
+WORKDIR /app
+
+COPY checker.py /app/checker.py
+COPY wp_ctf_lib.py /app/wp_ctf_lib.py
+
+RUN chmod +x /app/checker.py
+
+RUN mkdir -p /tmp/nobody/.config/chromium \
+    /tmp/nobody/.cache \
+    /tmp/nobody/.local/share/pki/nssdb \
+    /tmp/chrome-sessions \
+    && chown -R nobody:nogroup /tmp/nobody /tmp/chrome-sessions \
+    && chmod -R 700 /tmp/nobody \
+    && chmod 755 /tmp/chrome-sessions
+
+ENV HOME=/tmp/nobody
+ENV CHROME_BIN=/usr/bin/chromium
+ENV CHROMEDRIVER_PATH=/usr/bin/chromedriver
+ENV CHROME_USER_DATA_DIR=/tmp/chrome-sessions
+ENV XDG_CONFIG_HOME=/tmp/nobody/.config
+ENV XDG_CACHE_HOME=/tmp/nobody/.cache
+
+RUN which chromium && chromium --version && which chromedriver
+
+USER nobody
+
+RUN echo "Home: $HOME, User: $(id), Chrome: $CHROME_BIN"
+
+ENTRYPOINT ["python", "checker.py"]

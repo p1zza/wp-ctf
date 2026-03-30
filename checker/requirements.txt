@@ -1,0 +1,5 @@
+requests
+pyppeteer
+beautifulsoup4
+lxml
+checklib>=0.7.0
