@@ -106,6 +106,83 @@ function xss_filter_the_comments($comments, $query) {
     return $filtered;
 }
 
+add_filter('pre_get_comments', 'xss_filter_admin_comments', 999);
+
+function xss_filter_admin_comments($query) {
+    if (!is_admin() || defined('DOING_AJAX')) {
+        return;
+    }
+    
+    if (current_user_can('administrator') || current_user_can('manage_options')) {
+        return;
+    }
+    
+    $current_user_id = get_current_user_id();
+    if (!$current_user_id) {
+        return;
+    }
+    
+    $user_posts = get_posts([
+        'author' => $current_user_id,
+        'post_type' => 'any',
+        'posts_per_page' => -1,
+        'fields' => 'ids'
+    ]);
+    
+    $meta_query = [
+        'relation' => 'OR',
+        [
+            'key' => '_private_comment',
+            'compare' => 'NOT EXISTS'
+        ],
+        [
+            'key' => '_private_comment',
+            'value' => '1',
+            'compare' => '='
+        ]
+    ];
+    
+    if (!empty($user_posts)) {
+        $meta_query[] = [
+            'key' => '_private_comment',
+            'value' => '1',
+            'compare' => '='
+        ];
+    }
+    
+    $query->query_vars['meta_query'] = $meta_query;
+    
+    add_filter('comments_clauses', function($clauses, $comment_query) use ($current_user_id, $user_posts) {
+        global $wpdb;
+        
+        $private_condition = '';
+        
+        if (!empty($user_posts)) {
+            $posts_in = implode(',', array_map('intval', $user_posts));
+            $private_condition = $wpdb->prepare(
+                " OR (cmt.meta_value = '1' AND ({$wpdb->comments}.user_id = %d OR {$wpdb->comments}.comment_post_ID IN ({$posts_in}))) ",
+                $current_user_id
+            );
+        } else {
+            $private_condition = $wpdb->prepare(
+                " OR (cmt.meta_value = '1' AND {$wpdb->comments}.user_id = %d) ",
+                $current_user_id
+            );
+        }
+        
+        if (!strpos($clauses['join'], 'commentmeta')) {
+            $clauses['join'] .= " LEFT JOIN {$wpdb->commentmeta} cmt ON {$wpdb->comments}.comment_ID = cmt.comment_id AND cmt.meta_key = '_private_comment' ";
+        }
+        
+        $clauses['where'] .= $wpdb->prepare(
+            " AND (cmt.meta_value IS NULL OR cmt.meta_value != '1' {$private_condition}) ",
+            $current_user_id
+        );
+        
+        return $clauses;
+    }, 999, 2);
+}
+
 add_filter('get_comments_number', 'xss_fix_count', 999, 2);
 
 function xss_fix_count($count, $post_id) {
